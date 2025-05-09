@@ -1,0 +1,13 @@
+Project Structure:
+ml_service/
+├── models
+│   ├── __init__.py
+│   ├── model.py
+│   ├── prediction.py
+│   ├── transaction.py
+│   └── user.py
+├── services
+│   ├── __init__.py
+│   ├── auth.py
+│   └── prediction_service.py
+└── main.py

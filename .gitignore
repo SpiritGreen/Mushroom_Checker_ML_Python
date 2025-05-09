@@ -1,0 +1,64 @@
+# Python compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment variables
+.env
+
+# FastAPI/Backend specific
+*.log
+*.pid
+
+# Testing and coverage
+.pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# System files (Windows/macOS)
+.DS_Store
+Thumbs.db
+
+# Project-specific temporary files
+*.bak
+*.swp
+*~
+
+# Documentation build files
+docs/_build/
+
+# Database files (if using SQLite locally)
+*.sqlite3
+*.sqlite3-journal
+
+# Large data files or ML model artifacts
+*.pkl
+*.h5
+*.joblib
+models/
+data/
+
+# Unit test reports
+nosetests.xml
+
+# Test data
+data.csv
+READ_DATA.py
+watch_project_structure.py

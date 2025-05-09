@@ -1,0 +1,56 @@
+@startuml Components
+!define RECTANGLE class
+
+RECTANGLE "Client\n(Browser/Telegram Bot)" as Client
+RECTANGLE "FastAPI\n(API)" as FastAPI
+RECTANGLE "Business Logic" as BusinessLogic
+RECTANGLE "ML Model\n(Scikit-learn)" as MLModel
+RECTANGLE "Celery\n(Async Tasks)" as Celery
+RECTANGLE "Redis\n(Task Broker)" as Redis
+RECTANGLE "PostgreSQL\n(Database)" as PostgreSQL
+
+Client --> FastAPI : HTTP Requests\n(Register, Predict)
+FastAPI --> BusinessLogic : Handles Requests
+BusinessLogic --> PostgreSQL : Store Users,\nPredictions,\nTransactions
+BusinessLogic --> Celery : Queue Prediction Tasks
+Celery --> MLModel : Run Predictions
+Celery --> Redis : Task Queue
+BusinessLogic --> MLModel : Direct Predictions (if sync)
+
+note right of MLModel
+  Built-in model for
+  mushroom classification
+  (edible/poisonous)
+end note
+
+note left of Client
+Пользователь взаимодействует 
+через браузер или Telegram-бот.
+end note
+
+note left of FastAPI
+Обрабатывает HTTP-запросы 
+(регистрация, аутентификация, 
+предсказания).
+end note
+
+note left of BusinessLogic
+Управляет пользователями, 
+предсказаниями, транзакциями.
+end note
+
+note left of Redis
+Для асинхронных предсказаний 
+(если задачи тяжелые).
+end note
+
+note left of Celery
+Для асинхронных предсказаний 
+(если задачи тяжелые).
+end note
+
+note right of PostgreSQL
+Хранит данные пользователей, предсказаний, транзакций.
+end note
+
+@enduml

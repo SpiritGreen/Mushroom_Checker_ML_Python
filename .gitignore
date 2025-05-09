@@ -52,7 +52,6 @@ docs/_build/
 *.pkl
 *.h5
 *.joblib
-models/
 data/
 
 # Unit test reports

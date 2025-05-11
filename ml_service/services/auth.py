@@ -4,7 +4,7 @@ from passlib.context import CryptContext
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timedelta
-from jose import JWTError, jwt
+from jose import jwt
 from models.user import User
 
 # Настройка логирования
@@ -17,7 +17,7 @@ ALGORITHM = "HS256"  # Алгоритм шифрования (HMAC SHA-256)
 ACCESS_TOKEN_EXPIRE_MINUTES = 30  # Время жизни токена в минутах
 
 # Настройка хэширования паролей
-# pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")  # Использует bcrypt для хэширования
+# pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")  # Использует bcrypt для хэширования (возникла проблема с зависимостями)
 pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")  # Использует argon2 для хэширования
 
 # Временное хранилище пользователей (заменится БД)
@@ -41,11 +41,28 @@ class TokenData(BaseModel):
     username: Optional[str] = None  # Данные, которые удалось извлечь из токена
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    # Проверка введённого пароля с хэшированным
+    """
+    Проверяет соответствие введённого пароля хэшированному.
+
+    Args:
+        plain_password (str): Введённый пароль.
+        hashed_password (str): Хэшированный пароль из базы.
+
+    Returns:
+        bool: True, если пароли совпадают, иначе False.
+    """
     return pwd_context.verify(plain_password, hashed_password)
 
 def get_user(username: str) -> Optional[User]:
-    # Получаем пользователя из БД
+    """
+    Получает пользователя по имени из базы данных.
+
+    Args:
+        username (str): Имя пользователя.
+
+    Returns:
+        Optional[User]: Объект пользователя или None, если не найден.
+    """
     if username in db:
         user_dict = db[username]
         return User(**user_dict)
@@ -53,7 +70,16 @@ def get_user(username: str) -> Optional[User]:
     return None
 
 def authenticate_user(username: str, password: str) -> Optional[User]:
-    # Аутентификация пользователя
+    """
+    Аутентифицирует пользователя по имени и паролю.
+
+    Args:
+        username (str): Имя пользователя.
+        password (str): Пароль.
+
+    Returns:
+        Optional[User]: Объект пользователя или None, если аутентификация не удалась.
+    """
     user = get_user(username)
     if not user:
         logger.error(f"Аутентификация провалена: Пользователь {username} не найден")
@@ -65,7 +91,16 @@ def authenticate_user(username: str, password: str) -> Optional[User]:
     return user
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    # Создание JWT-токена
+    """
+    Создаёт JWT-токен для аутентификации.
+
+    Args:
+        data (dict): Данные для кодирования в токен (например, username).
+        expires_delta (timedelta): Время жизни токена.
+
+    Returns:
+        str: Закодированный JWT-токен.
+    """
     to_encode = data.copy()
     expire = datetime.utcnow() + expires_delta
     to_encode.update({"exp": expire})
@@ -74,7 +109,20 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return encoded_jwt
 
 def register_user(username: str, email: str, password: str) -> User:
-    # Регистрация нового пользователя
+    """
+    Регистрирует нового пользователя в системе.
+
+    Args:
+        username (str): Имя пользователя.
+        email (str): Email пользователя.
+        password (str): Пароль пользователя.
+
+    Returns:
+        User: Объект зарегистрированного пользователя.
+
+    Raises:
+        HTTPException: Если пользователь с таким именем уже существует.
+    """
     if username in db:
         logger.error(f"Регистрация провалена: Пользователь {username} уже существует")
         raise HTTPException(
@@ -99,7 +147,19 @@ def register_user(username: str, email: str, password: str) -> User:
     return user
 
 def deduct_balance(username: str, amount: float) -> User:
-    # Списание токенов
+    """
+    Списывает указанное количество кредитов с баланса пользователя.
+
+    Args:
+        username (str): Имя пользователя.
+        amount (float): Сумма для списания.
+
+    Returns:
+        User: Обновлённый объект пользователя.
+
+    Raises:
+        HTTPException: Если пользователь не найден или недостаточно средств.
+    """
     user = get_user(username)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")

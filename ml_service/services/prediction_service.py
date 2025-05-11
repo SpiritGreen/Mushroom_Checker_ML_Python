@@ -1,59 +1,120 @@
 import pandas as pd
 import io
 import logging
+import pickle
+import os
 from typing import List, Dict, Any
-from sklearn.ensemble import RandomForestClassifier  # ЗАГЛУШКА
 from models.prediction import Prediction
-from fastapi import HTTPException
 from models.model import Model
+from fastapi import HTTPException
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Встроенные модели (ЗАГЛУШКА)
+# Пути к моделям, импутерам и энкодерам
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # На уровень выше от services к ml_service
+MODEL_DIR = os.path.join(BASE_DIR, "ml_models", "trained_ml_models")
+IMPUTER_DIR = os.path.join(BASE_DIR, "ml_models", "imputers")
+ENCODER_DIR = os.path.join(BASE_DIR, "ml_models", "label_encoders")
+
+# Проверка существования директорий
+for directory in [MODEL_DIR, IMPUTER_DIR, ENCODER_DIR]:
+    if not os.path.exists(directory):
+        logger.error(f"Не найдена директория: {directory}")
+        raise FileNotFoundError(f"Directory not found: {directory}")
+    
+# Список моделей
 MODELS = [
     Model(id=1, name="RandomForest", cost=1.0),
     Model(id=2, name="GradientBoosting", cost=2.0),
     Model(id=3, name="NeuralNetwork", cost=3.0)
 ]
 
-# Получение списка имеющихся моделей:
+# Список всех признаков
+REQUIRED_COLUMNS = [
+    "cap-diameter", "cap-shape", "cap-surface", "cap-color", "does-bruise-or-bleed",
+    "gill-attachment", "gill-spacing", "gill-color", "stem-height", "stem-width",
+    "stem-surface", "stem-color", "has-ring", "ring-type", "habitat", "season"
+]
+
+NUMERICAL_COLUMNS = ["cap-diameter", "stem-height", "stem-width"]
+CATEGORICAL_COLUMNS = [col for col in REQUIRED_COLUMNS if col not in NUMERICAL_COLUMNS]
+
+
 def get_available_models() -> List[Model]:
+    """Возвращает список доступных ML-моделей."""
     logger.info("Отображены доступные модели")
     return MODELS
 
-# Чтение файла, который нам отправили:
 def read_input_file(file: bytes, file_type: str) -> List[Dict[str, Any]]:
+    """
+    Читает входной файл (CSV или XLSX) и возвращает данные в формате списка словарей.
+
+    Args:
+        file (bytes): Содержимое файла.
+        file_type (str): Тип файла ('csv' или 'xlsx').
+
+    Returns:
+        List[Dict[str, Any]]: Данные в формате списка словарей.
+
+    Raises:
+        HTTPException: Если файл не поддерживается или произошла ошибка чтения.
+    """
     # Чтение входных данных (xlsx/csv)
     try:
+        logger.info(f"Чтение файла следующего типа: {file_type}")
         file_stream = io.BytesIO(file) # Для корректного чтения файлов
         if file_type == "csv":
             df = pd.read_csv(file_stream)
         elif file_type == "xlsx":
             df = pd.read_excel(file_stream)
         else:
+            logger.error(f"Неподдерживаемый тип файла: {file_type}")
             raise HTTPException(status_code=400, detail="Неподдерживаемый тип файла")
         data = df.to_dict(orient="records")
-        logger.info(f"Успешно прочитан файл: {len(data)}")
+        logger.info(f"Успешно прочитано строк файла: {len(data)}")
         return data
     except Exception as e:
+        logger.error(f"Ошибка во время чтения файла: {str(e)}")
         raise HTTPException(status_code=400, detail=f"Ошибка во время чтения файла: {str(e)}")
 
-# Валидация входных данных:
 def validate_input_data(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    required_columns = ["cap-diameter", "cap-shape", "cap-surface"]  # ДОПОЛНИТЬ
+    """
+    Проверяет входные данные на наличие необходимых столбцов.
+
+    Args:
+        data (List[Dict[str, Any]]): Входные данные.
+
+    Returns:
+        List[Dict[str, Any]]: Проверенные данные.
+
+    Raises:
+        HTTPException: Если отсутствуют столбцы.
+    """
     logger.info("Валидация входных данных")
     for row in data:
-        for col in required_columns:
+        for col in REQUIRED_COLUMNS:
             if col not in row:
-                raise HTTPException(status_code=400, detail=f"Нет колонки: {col}")
+                logger.error(f"Пропущена колонка: {col}")
+                raise HTTPException(status_code=400, detail=f"Missing column: {col}")
     logger.info("Входные данные успешно провалидированы")
     return data
 
-# Получение модели:
 def get_model(model_id: int) -> Model:
-    logger.info(f"Пытаемся получить модель с id: {model_id}")
+    """
+    Возвращает модель по её ID.
+
+    Args:
+        model_id (int): ID модели.
+
+    Returns:
+        Model: Объект модели.
+
+    Raises:
+        HTTPException: Если модель не найдена.
+    """
+    logger.info(f"Получение модели с id: {model_id}")
     # Поиск модели по id
     for model in MODELS:
         if model.id == model_id:
@@ -61,27 +122,87 @@ def get_model(model_id: int) -> Model:
     logger.error(f"Модель не найдена: {model_id}")
     raise HTTPException(status_code=404, detail="Модель не найдена")
 
-# Предсказание:
 def make_prediction(prediction: Prediction) -> Prediction:
-    try:
-        logger.info(f"Создание предсказаний для модели: {prediction.model_id}")
-        # Получить модель
-        model = get_model(prediction.model_id)
-        
-        # Преобразование данных
-        data = validate_input_data(prediction.input_data)
-        X = pd.DataFrame(data)  # Дополнить предобработкой
+    """
+    Выполняет предсказание с использованием обученной ML-модели.
 
-        # Фиктивное предсказание (заглушка)
-        predictions = ["edible" if i % 2 == 0 else "poisonous" for i in range(len(data))]
+    Args:
+        prediction (Prediction): Объект предсказания с входными данными.
+
+    Returns:
+        Prediction: Обновлённый объект с результатами и статусом.
+
+    Raises:
+        HTTPException: Если произошла ошибка при предсказании.
+    """
+    try:
+        logger.info(f"Получение предсказания для модели: {prediction.model_id}")
+        model_info = get_model(prediction.model_id)
+
+        # Загружаем модель
+        model_path = os.path.join(MODEL_DIR, f"{model_info.name}.pkl")
+        if not os.path.exists(model_path):
+            logger.error(f"Не найден файл модели: {model_path}")
+            raise FileNotFoundError(f"Model file not found: {model_path}")
+        with open(model_path, 'rb') as f:
+            model = pickle.load(f)
         
+        # Загружаем импутеры и энкодеры
+        imputers = {}
+        encoders = {}
+        for col in NUMERICAL_COLUMNS:
+            imputer_path = os.path.join(IMPUTER_DIR, f'imputer_{col}.pkl')
+            if not os.path.exists(imputer_path):
+                logger.error(f"Не найден файл импутера: {imputer_path}")
+                raise FileNotFoundError(f"Imputer file not found: {imputer_path}")
+            imputers[col] = pickle.load(open(imputer_path, 'rb'))
+
+        for col in CATEGORICAL_COLUMNS:
+            imputer_path = os.path.join(IMPUTER_DIR, f'imputer_{col}.pkl')
+            encoder_path = os.path.join(ENCODER_DIR, f'le_{col}.pkl')
+            if not os.path.exists(imputer_path):
+                logger.error(f"Не найден файл импутера: {imputer_path}")
+                raise FileNotFoundError(f"Imputer file not found: {imputer_path}")
+            if not os.path.exists(encoder_path):
+                logger.error(f"Не найден файл энкодера: {encoder_path}")
+                raise FileNotFoundError(f"Encoder file not found: {encoder_path}")
+            imputers[col] = pickle.load(open(imputer_path, 'rb'))
+            encoders[col] = pickle.load(open(encoder_path, 'rb'))
+        le_class_path = os.path.join(ENCODER_DIR, 'le_class.pkl')
+        if not os.path.exists(le_class_path):
+            logger.error(f"Class encoder file not found: {le_class_path}")
+            raise FileNotFoundError(f"Class encoder file not found: {le_class_path}")
+        le_class = pickle.load(open(le_class_path, 'rb'))
+        
+        # Валидация данных
+        data = validate_input_data(prediction.input_data)
+        
+        # Подготовка данных для предсказания
+        df = pd.DataFrame(data)
+
+        # Обработка NaN
+        for col in NUMERICAL_COLUMNS:
+            df[col] = imputers[col].transform(df[[col]]).ravel()
+        for col in CATEGORICAL_COLUMNS:
+            df[col] = imputers[col].transform(df[[col]].astype(str)).ravel()
+        
+        # Обработка неизвестных категориальных значений
+        for col in CATEGORICAL_COLUMNS:
+            known_classes = set(encoders[col].classes_)
+            df[col] = df[col].apply(lambda x: x if x in known_classes else 'unknown')
+        
+        # Кодирование категориальных признаков
+        for col in CATEGORICAL_COLUMNS:
+            try:
+                df[col] = encoders[col].transform(df[col].astype(str))
+            except ValueError as e:
+                logger.error(f"Ошибка во время кодирования признака {col}: {str(e)}")
+                raise HTTPException(status_code=400, detail=f"Неверные данные в колонке {col}: {str(e)}")
+
         # Выполнение предсказания
-        # model_instance = model_instances.get(prediction.model_id)
-        # if not model_instance:
-        #     raise HTTPException(status_code=500, detail="Model instance not found")
-        # predictions = model_instance.predict(X)  # Заменить на реальную модель
+        predictions = model.predict(df[REQUIRED_COLUMNS])
+        prediction.result = le_class.inverse_transform(predictions).tolist()
         
-        prediction.result = predictions
         prediction.status = "completed"
         logger.info("Предсказание успешно завершено")
     except HTTPException as e:

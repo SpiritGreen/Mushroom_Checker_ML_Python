@@ -7,7 +7,7 @@ from services.auth import User, Token, TokenData, authenticate_user, create_acce
 from services.prediction_service import read_input_file, make_prediction, get_available_models
 from models.prediction import Prediction
 from models.model import Model
-from datetime import timedelta, datetime
+from datetime import timedelta, datetime, timezone
 
 # Настройки
 SECRET_KEY = "secret-key"
@@ -99,7 +99,7 @@ async def predict(
         model_id=model_id,  
         input_data=input_data,
         status="pending",
-        created_at=datetime.utcnow()
+        created_at=datetime.now(timezone.utc)
     )
     
     # Выполнение предсказания

@@ -3,7 +3,7 @@ from fastapi import HTTPException, status
 from passlib.context import CryptContext
 from pydantic import BaseModel
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from jose import jwt
 from models.user import User
 
@@ -17,21 +17,22 @@ ALGORITHM = "HS256"  # Алгоритм шифрования (HMAC SHA-256)
 ACCESS_TOKEN_EXPIRE_MINUTES = 30  # Время жизни токена в минутах
 
 # Настройка хэширования паролей
-# pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")  # Использует bcrypt для хэширования (возникла проблема с зависимостями)
-pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")  # Использует argon2 для хэширования
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")  # Использует bcrypt для хэширования 
 
 # Временное хранилище пользователей (заменится БД)
-db = {
-    "testuser": {
-        "id": 1,
-        "username": "testuser",
-        "email": "testuser@example.com",
-        "hashed_password": pwd_context.hash("password123"),
-        "balance": 10.0,
-        "disabled": False,
-        "created_at": datetime.utcnow()
-    }
-}
+# db = {
+#     "testuser": {
+#         "id": 1,
+#         "username": "testuser",
+#         "email": "testuser@example.com",
+#         "hashed_password": pwd_context.hash("password123"),
+#         "balance": 10.0,
+#         "disabled": False,
+#         "created_at": datetime.now(timezone.utc)
+#     }
+# }
+
+db = {}
 
 class Token(BaseModel):
     access_token: str  # JWT-токен, тип bearer
@@ -102,10 +103,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
         str: Закодированный JWT-токен.
     """
     to_encode = data.copy()
-    expire = datetime.utcnow() + expires_delta
+    expire = datetime.now(timezone.utc) + expires_delta
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    logger.info(f"Создан токен для {data['sub']}, истекает: {expire.isoformat()}, сейчас {datetime.utcnow()}")
+    logger.info(f"Создан токен для {data['sub']}, истекает: {expire.isoformat()}, сейчас {datetime.now(timezone.utc)}")
     return encoded_jwt
 
 def register_user(username: str, email: str, password: str) -> User:
@@ -140,7 +141,7 @@ def register_user(username: str, email: str, password: str) -> User:
         hashed_password=hashed_password,
         balance=10.0,  # Бонусные кредиты
         disabled=False,
-        created_at=datetime.utcnow()
+        created_at=datetime.now(timezone.utc)
     )
     db[username] = user.model_dump()
     logger.info(f"Пользователь {username} успешно зарегистрирован")

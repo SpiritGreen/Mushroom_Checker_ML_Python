@@ -1,42 +1,5 @@
 Project Structure:
 ml_service/
-├── ml_models
-│   ├── imputers
-│   │   ├── imputer_cap-color.pkl
-│   │   ├── imputer_cap-diameter.pkl
-│   │   ├── imputer_cap-shape.pkl
-│   │   ├── imputer_cap-surface.pkl
-│   │   ├── imputer_does-bruise-or-bleed.pkl
-│   │   ├── imputer_gill-attachment.pkl
-│   │   ├── imputer_gill-color.pkl
-│   │   ├── imputer_gill-spacing.pkl
-│   │   ├── imputer_habitat.pkl
-│   │   ├── imputer_has-ring.pkl
-│   │   ├── imputer_ring-type.pkl
-│   │   ├── imputer_season.pkl
-│   │   ├── imputer_stem-color.pkl
-│   │   ├── imputer_stem-height.pkl
-│   │   ├── imputer_stem-surface.pkl
-│   │   └── imputer_stem-width.pkl
-│   ├── label_encoders
-│   │   ├── le_cap-color.pkl
-│   │   ├── le_cap-shape.pkl
-│   │   ├── le_cap-surface.pkl
-│   │   ├── le_class.pkl
-│   │   ├── le_does-bruise-or-bleed.pkl
-│   │   ├── le_gill-attachment.pkl
-│   │   ├── le_gill-color.pkl
-│   │   ├── le_gill-spacing.pkl
-│   │   ├── le_habitat.pkl
-│   │   ├── le_has-ring.pkl
-│   │   ├── le_ring-type.pkl
-│   │   ├── le_season.pkl
-│   │   ├── le_stem-color.pkl
-│   │   └── le_stem-surface.pkl
-│   └── trained_ml_models
-│       ├── GradientBoosting.pkl
-│       ├── NeuralNetwork.pkl
-│       └── RandomForest.pkl
 ├── models
 │   ├── __init__.py
 │   ├── model.py
@@ -47,6 +10,8 @@ ml_service/
 │   ├── __init__.py
 │   ├── auth.py
 │   └── prediction_service.py
+├── tests
+│   └── test_endpoints.py
 ├── Makefile
 ├── main.py
 └── train_models.py

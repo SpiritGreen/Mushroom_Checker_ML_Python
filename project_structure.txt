@@ -15,11 +15,13 @@ ml_service/
 ├── services
 │   ├── __init__.py
 │   ├── auth.py
+│   ├── db_operations.py
 │   └── prediction_service.py
 ├── tests
 │   └── test_endpoints.py
 ├── Makefile
 ├── database.py
+├── init_models.py
 ├── main.py
 ├── ml_service.db
 └── train_models.py

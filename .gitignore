@@ -47,6 +47,7 @@ docs/_build/
 # Database files (if using SQLite locally)
 *.sqlite3
 *.sqlite3-journal
+*.db
 
 # Large data files or ML model artifacts
 *.pkl

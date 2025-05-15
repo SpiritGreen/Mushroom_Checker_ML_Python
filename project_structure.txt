@@ -1,5 +1,11 @@
 Project Structure:
 ml_service/
+├── db
+│   ├── __init__.py
+│   ├── db_model.py
+│   ├── db_prediction.py
+│   ├── db_transaction.py
+│   └── db_user.py
 ├── models
 │   ├── __init__.py
 │   ├── model.py
@@ -13,5 +19,7 @@ ml_service/
 ├── tests
 │   └── test_endpoints.py
 ├── Makefile
+├── database.py
 ├── main.py
+├── ml_service.db
 └── train_models.py

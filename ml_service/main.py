@@ -2,13 +2,14 @@ from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from typing import Optional
-from pydantic import BaseModel
+from sqlalchemy.orm import Session
 from services.auth import User, Token, TokenData, authenticate_user, create_access_token, register_user, get_user, deduct_balance
 from services.prediction_service import read_input_file, make_prediction, get_available_models
+from services.db_operations import create_transaction
 from models.prediction import Prediction
 from models.model import Model
 from datetime import timedelta, datetime, timezone
-from database import engine, Base
+from database import engine, Base, get_db
 
 # SQLAlchemy-модели
 from db.db_user import DBUser
@@ -28,7 +29,7 @@ app = FastAPI()
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
-async def get_current_user(token: str = Depends(oauth2_scheme)):
+async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Не удалось проверить учетные данные",
@@ -42,21 +43,21 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         token_data = TokenData(username=username)
     except JWTError:
         raise credentials_exception
-    user = get_user(token_data.username)
+    user = get_user(db, token_data.username)
     if user is None:
         raise credentials_exception
     return user
 
 # Регистрация нового пользователя
 @app.post("/register", response_model=User)
-async def register(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = register_user(form_data.username, f"{form_data.username}@example.com", form_data.password)
+async def register(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = register_user(db, form_data.username, f"{form_data.username}@example.com", form_data.password)
     return user
 
 # Аутентификация пользователя
 @app.post("/token", response_model=Token)
-async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = authenticate_user(form_data.username, form_data.password)
+async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -76,16 +77,22 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
 
 # Получение списка доступных моделей
 @app.get("/models", response_model=list[Model])
-async def get_models(current_user: User = Depends(get_current_user)):
-    return get_available_models()
+async def get_models(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return get_available_models(db)
 
 @app.post("/predict", response_model=Prediction)
 async def predict(
     model_id: int,
-    file: UploadFile = File(...), 
-    current_user: User = Depends(get_current_user)):
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
     # Проверка расширения файла
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="No file provided")
+    
     file_type = file.filename.split(".")[-1].lower()
+   
     if file_type not in ["csv", "xlsx"]:
         raise HTTPException(status_code=400, detail="Only CSV or XLSX files are supported")
     
@@ -94,7 +101,7 @@ async def predict(
     input_data = read_input_file(content, file_type)
 
     # Проверка модели
-    models = get_available_models()
+    models = get_available_models(db)
     selected_model = next((m for m in models if m.id == model_id), None)
     if not selected_model:
         raise HTTPException(status_code=400, detail="Invalid model ID")
@@ -106,16 +113,22 @@ async def predict(
     # Создание предсказания
     prediction = Prediction(
         user_id=current_user.id,
-        model_id=model_id,  
+        model_id=model_id,
         input_data=input_data,
         status="pending",
         created_at=datetime.now(timezone.utc)
     )
     
     # Выполнение предсказания
-    prediction = make_prediction(prediction)
+    prediction = make_prediction(db, prediction)
 
-    # Списание токенов
-    deduct_balance(current_user.username, selected_model.cost)
+    # Списание токенов и запись транзакции
+    deduct_balance(db, current_user.username, selected_model.cost)
+    create_transaction(
+        db,
+        user_id=current_user.id,
+        amount=-selected_model.cost,
+        description=f"Prediction using model {selected_model.name}"
+    )
 
     return prediction

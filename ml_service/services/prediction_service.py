@@ -3,10 +3,13 @@ import io
 import logging
 import pickle
 import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Sequence
+from fastapi import HTTPException
+from sqlalchemy.orm import Session
 from models.prediction import Prediction
 from models.model import Model
-from fastapi import HTTPException
+from db.db_model import DBModel
+from services.db_operations import create_prediction, update_prediction_result, get_model_by_id
 
 # Настройка логирования
 logging.basicConfig(level=logging.INFO)
@@ -24,13 +27,6 @@ for directory in [MODEL_DIR, IMPUTER_DIR, ENCODER_DIR]:
         logger.error(f"Не найдена директория: {directory}")
         raise FileNotFoundError(f"Directory not found: {directory}")
     
-# Список моделей
-MODELS = [
-    Model(id=1, name="RandomForest", cost=1.0),
-    Model(id=2, name="GradientBoosting", cost=2.0),
-    Model(id=3, name="NeuralNetwork", cost=3.0)
-]
-
 # Список всех признаков
 REQUIRED_COLUMNS = [
     "cap-diameter", "cap-shape", "cap-surface", "cap-color", "does-bruise-or-bleed",
@@ -41,29 +37,44 @@ REQUIRED_COLUMNS = [
 NUMERICAL_COLUMNS = ["cap-diameter", "stem-height", "stem-width"]
 CATEGORICAL_COLUMNS = [col for col in REQUIRED_COLUMNS if col not in NUMERICAL_COLUMNS]
 
+# Список моделей
+MODELS = [
+    Model(id=1, name="RandomForest", cost=1.0, file_path=f"{MODEL_DIR}/RandomForest.pkl"),
+    Model(id=2, name="GradientBoosting", cost=2.0, file_path=f"{MODEL_DIR}/GradientBoosting.pkl"),
+    Model(id=3, name="NeuralNetwork", cost=3.0, file_path=f"{MODEL_DIR}/NeuralNetwork.pkl")
+]
 
-def get_available_models() -> List[Model]:
-    """Возвращает список доступных ML-моделей."""
-    logger.info("Отображены доступные модели")
-    return MODELS
+def get_available_models(db: Session) -> List[Model]:
+    """
+    Возвращает список доступных ML-моделей из базы данных.
 
-def read_input_file(file: bytes, file_type: str) -> List[Dict[str, Any]]:
+    Args:
+        db (Session): Сессия SQLAlchemy для взаимодействия с базой данных.
+
+    Returns:
+        List[Model]: Список объектов моделей в формате Pydantic.
+    """
+    logger.info("Получение списка доступных моделей")
+    db_models = db.query(DBModel).all()
+    return [Model(id=m.id, name=m.name, cost=m.cost, file_path=m.file_path) for m in db_models]
+
+def read_input_file(file: bytes, file_type: str) -> Sequence[Dict[str, Any]]:
     """
     Читает входной файл (CSV или XLSX) и возвращает данные в формате списка словарей.
 
     Args:
-        file (bytes): Содержимое файла.
+        file (bytes): Содержимое файла в виде байтов.
         file_type (str): Тип файла ('csv' или 'xlsx').
 
     Returns:
-        List[Dict[str, Any]]: Данные в формате списка словарей.
+        Sequence[Dict[str, Any]]: Данные в формате списка словарей.
 
     Raises:
-        HTTPException: Если файл не поддерживается или произошла ошибка чтения.
+        HTTPException: Если тип файла не поддерживается или произошла ошибка чтения.
     """
     # Чтение входных данных (xlsx/csv)
     try:
-        logger.info(f"Чтение файла следующего типа: {file_type}")
+        logger.info(f"Чтение файла типа: {file_type}")
         file_stream = io.BytesIO(file) # Для корректного чтения файлов
         if file_type == "csv":
             df = pd.read_csv(file_stream)
@@ -73,24 +84,24 @@ def read_input_file(file: bytes, file_type: str) -> List[Dict[str, Any]]:
             logger.error(f"Неподдерживаемый тип файла: {file_type}")
             raise HTTPException(status_code=400, detail="Неподдерживаемый тип файла")
         data = df.to_dict(orient="records")
-        logger.info(f"Успешно прочитано строк файла: {len(data)}")
+        logger.info(f"Успешно прочитано строк: {len(data)}")
         return data
     except Exception as e:
-        logger.error(f"Ошибка во время чтения файла: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Ошибка во время чтения файла: {str(e)}")
+        logger.error(f"Ошибка чтения файла: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Ошибка чтения файла: {str(e)}")
 
-def validate_input_data(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def validate_input_data(data: Sequence[Dict[str, Any]]) -> Sequence[Dict[str, Any]]:
     """
-    Проверяет входные данные на наличие необходимых столбцов.
+    Проверяет входные данные на наличие всех необходимых столбцов.
 
     Args:
-        data (List[Dict[str, Any]]): Входные данные.
+        data (Sequence[Dict[str, Any]]): Входные данные в формате списка словарей.
 
     Returns:
-        List[Dict[str, Any]]: Проверенные данные.
+        Sequence[Dict[str, Any]]: Проверенные данные.
 
     Raises:
-        HTTPException: Если отсутствуют столбцы.
+        HTTPException: Если отсутствуют необходимые столбцы.
     """
     logger.info("Валидация входных данных")
     for row in data:
@@ -101,82 +112,80 @@ def validate_input_data(data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     logger.info("Входные данные успешно провалидированы")
     return data
 
-def get_model(model_id: int) -> Model:
+def make_prediction(db: Session, prediction: Prediction) -> Prediction:
     """
-    Возвращает модель по её ID.
+    Выполняет предсказание с использованием обученной ML-модели и сохраняет результат в базе данных.
 
     Args:
-        model_id (int): ID модели.
-
-    Returns:
-        Model: Объект модели.
-
-    Raises:
-        HTTPException: Если модель не найдена.
-    """
-    logger.info(f"Получение модели с id: {model_id}")
-    # Поиск модели по id
-    for model in MODELS:
-        if model.id == model_id:
-            return model
-    logger.error(f"Модель не найдена: {model_id}")
-    raise HTTPException(status_code=404, detail="Модель не найдена")
-
-def make_prediction(prediction: Prediction) -> Prediction:
-    """
-    Выполняет предсказание с использованием обученной ML-модели.
-
-    Args:
+        db (Session): Сессия SQLAlchemy для взаимодействия с базой данных.
         prediction (Prediction): Объект предсказания с входными данными.
 
     Returns:
-        Prediction: Обновлённый объект с результатами и статусом.
+        Prediction: Обновлённый объект предсказания с результатами и статусом.
 
     Raises:
-        HTTPException: Если произошла ошибка при предсказании.
+        HTTPException: Если модель не найдена, файл модели отсутствует или произошла ошибка предсказания.
     """
     try:
-        logger.info(f"Получение предсказания для модели: {prediction.model_id}")
-        model_info = get_model(prediction.model_id)
+        logger.info(f"Создание предсказания для модели ID: {prediction.model_id}")
+        # Сохранение предсказания в БД
+        db_prediction = create_prediction(
+            db,
+            user_id=prediction.user_id,
+            model_id=prediction.model_id,
+            input_data=prediction.input_data
+        )
 
-        # Загружаем модель
-        model_path = os.path.join(MODEL_DIR, f"{model_info.name}.pkl")
+        # Проверка модели
+        db_model = get_model_by_id(db, prediction.model_id)
+        if not db_model:
+            update_prediction_result(db, db_prediction.id, [], "failed")
+            logger.error(f"Модель не найдена: {prediction.model_id}")
+            raise HTTPException(status_code=400, detail="Invalid model ID")
+
+        # Загрузка модели
+        model_path = os.path.join(MODEL_DIR, f"{db_model.name}.pkl")
         if not os.path.exists(model_path):
+            update_prediction_result(db, db_prediction.id, [], "failed")
             logger.error(f"Не найден файл модели: {model_path}")
-            raise FileNotFoundError(f"Model file not found: {model_path}")
+            raise HTTPException(status_code=500, detail=f"Model file not found: {model_path}")
         with open(model_path, 'rb') as f:
             model = pickle.load(f)
-        
-        # Загружаем импутеры и энкодеры
+
+        # Загрузка импутеров и энкодеров
         imputers = {}
         encoders = {}
         for col in NUMERICAL_COLUMNS:
             imputer_path = os.path.join(IMPUTER_DIR, f'imputer_{col}.pkl')
             if not os.path.exists(imputer_path):
+                update_prediction_result(db, db_prediction.id, [], "failed")
                 logger.error(f"Не найден файл импутера: {imputer_path}")
-                raise FileNotFoundError(f"Imputer file not found: {imputer_path}")
+                raise HTTPException(status_code=500, detail=f"Imputer file not found: {imputer_path}")
             imputers[col] = pickle.load(open(imputer_path, 'rb'))
 
         for col in CATEGORICAL_COLUMNS:
             imputer_path = os.path.join(IMPUTER_DIR, f'imputer_{col}.pkl')
             encoder_path = os.path.join(ENCODER_DIR, f'le_{col}.pkl')
             if not os.path.exists(imputer_path):
+                update_prediction_result(db, db_prediction.id, [], "failed")
                 logger.error(f"Не найден файл импутера: {imputer_path}")
-                raise FileNotFoundError(f"Imputer file not found: {imputer_path}")
+                raise HTTPException(status_code=500, detail=f"Imputer file not found: {imputer_path}")
             if not os.path.exists(encoder_path):
+                update_prediction_result(db, db_prediction.id, [], "failed")
                 logger.error(f"Не найден файл энкодера: {encoder_path}")
-                raise FileNotFoundError(f"Encoder file not found: {encoder_path}")
+                raise HTTPException(status_code=500, detail=f"Encoder file not found: {encoder_path}")
             imputers[col] = pickle.load(open(imputer_path, 'rb'))
             encoders[col] = pickle.load(open(encoder_path, 'rb'))
         le_class_path = os.path.join(ENCODER_DIR, 'le_class.pkl')
         if not os.path.exists(le_class_path):
-            logger.error(f"Class encoder file not found: {le_class_path}")
-            raise FileNotFoundError(f"Class encoder file not found: {le_class_path}")
+            update_prediction_result(db, db_prediction.id, [], "failed")
+            logger.error(f"Не найден файл энкодера классов: {le_class_path}")
+            raise HTTPException(status_code=500, detail=f"Class encoder file not found: {le_class_path}")
         le_class = pickle.load(open(le_class_path, 'rb'))
-        
+
         # Валидация данных
         data = validate_input_data(prediction.input_data)
-        
+
         # Подготовка данных для предсказания
         df = pd.DataFrame(data)
 
@@ -185,31 +194,42 @@ def make_prediction(prediction: Prediction) -> Prediction:
             df[col] = imputers[col].transform(df[[col]]).ravel()
         for col in CATEGORICAL_COLUMNS:
             df[col] = imputers[col].transform(df[[col]].astype(str)).ravel()
-        
+
         # Обработка неизвестных категориальных значений
         for col in CATEGORICAL_COLUMNS:
             known_classes = set(encoders[col].classes_)
             df[col] = df[col].apply(lambda x: x if x in known_classes else 'unknown')
-        
+
         # Кодирование категориальных признаков
         for col in CATEGORICAL_COLUMNS:
             try:
                 df[col] = encoders[col].transform(df[col].astype(str))
             except ValueError as e:
-                logger.error(f"Ошибка во время кодирования признака {col}: {str(e)}")
+                update_prediction_result(db, db_prediction.id, [], "failed")
+                logger.error(f"Ошибка кодирования признака {col}: {str(e)}")
                 raise HTTPException(status_code=400, detail=f"Неверные данные в колонке {col}: {str(e)}")
 
         # Выполнение предсказания
         predictions = model.predict(df[REQUIRED_COLUMNS])
-        prediction.result = le_class.inverse_transform(predictions).tolist()
-        
-        prediction.status = "completed"
+        result = le_class.inverse_transform(predictions).tolist()
+
+        # Обновление предсказания в БД
+        db_prediction = update_prediction_result(db, db_prediction.id, result, "completed")
+
         logger.info("Предсказание успешно завершено")
+        return Prediction(
+            id=db_prediction.id,
+            user_id=db_prediction.user_id,
+            model_id=db_prediction.model_id,
+            input_data=db_prediction.input_data,
+            result=db_prediction.result,
+            status=db_prediction.status,
+            created_at=db_prediction.created_at
+        )
     except HTTPException as e:
         logger.error(f"Предсказание завершилось ошибкой: {str(e)}")
         raise
     except Exception as e:
-        logger.error(f"Неожиданная ошибка во время предсказания: {str(e)}")
-        prediction.status = "failed"
+        update_prediction_result(db, db_prediction.id, [], "failed")
+        logger.error(f"Неожиданная ошибка предсказания: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")
-    return prediction

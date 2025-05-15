@@ -8,11 +8,21 @@ from services.prediction_service import read_input_file, make_prediction, get_av
 from models.prediction import Prediction
 from models.model import Model
 from datetime import timedelta, datetime, timezone
+from database import engine, Base
+
+# SQLAlchemy-модели
+from db.db_user import DBUser
+from db.db_model import DBModel
+from db.db_prediction import DBPrediction
+from db.db_transaction import DBTransaction
 
 # Настройки
 SECRET_KEY = "secret-key"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+# Создание таблиц при запуске
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI()
 

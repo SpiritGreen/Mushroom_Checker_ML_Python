@@ -14,6 +14,11 @@ from main import app
 from services.auth import db, create_access_token
 from datetime import timedelta
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from database import Base
+
+
 @pytest.fixture
 def client():
     return TestClient(app)
@@ -30,6 +35,16 @@ def registered_user(client, clean_db):
     token_response = client.post("/token", data={"username": "testuser", "password": "password123"})
     token = token_response.json()["access_token"]
     return {"username": "testuser", "token": token}
+
+# Для использования SQLite в памяти:
+@pytest.fixture
+def test_db():
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(bind=engine)
+    session = sessionmaker(bind=engine)()
+    yield session
+    session.close()
+    Base.metadata.drop_all(bind=engine)
 
 def test_register(client, clean_db):
     response = client.post("/register", data={"username": "testuser", "password": "password123", "email": "testuser@example.com"})

@@ -50,7 +50,7 @@ docs/_build/
 *.db
 
 # Large data files or ML model artifacts
-*.pkl
+# *.pkl # Добавила модели через Git LFS
 *.h5
 *.joblib
 data/

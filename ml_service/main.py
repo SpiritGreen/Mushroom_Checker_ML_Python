@@ -10,6 +10,8 @@ from models.prediction import Prediction
 from models.model import Model
 from datetime import timedelta, datetime, timezone
 from database import engine, Base, get_db
+from celery_app import app as celery_app
+from services.db_operations import create_prediction
 
 # SQLAlchemy-модели
 from db.db_user import DBUser
@@ -29,7 +31,21 @@ app = FastAPI()
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
+# Зависимость для аутентификации и получения текущего пользователя
 async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    """
+    Аутентифицирует пользователя по JWT-токену и возвращает объект User.
+
+    Args:
+        token (str): JWT-токен из заголовка Authorization.
+        db (Session): Сессия SQLAlchemy для доступа к базе данных.
+
+    Returns:
+        User: Объект текущего пользователя.
+
+    Raises:
+        HTTPException: Если токен недействителен или пользователь не найден (401).
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Не удалось проверить учетные данные",
@@ -51,12 +67,38 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
 # Регистрация нового пользователя
 @app.post("/register", response_model=User)
 async def register(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    """
+    Регистрирует нового пользователя в системе.
+
+    Args:
+        form_data (OAuth2PasswordRequestForm): Данные формы с именем пользователя и паролем.
+        db (Session): Сессия SQLAlchemy для доступа к базе данных.
+
+    Returns:
+        User: Объект зарегистрированного пользователя.
+
+    Raises:
+        HTTPException: Если пользователь с таким именем или email уже существует (400).
+    """
     user = register_user(db, form_data.username, f"{form_data.username}@example.com", form_data.password)
     return user
 
 # Аутентификация пользователя
 @app.post("/token", response_model=Token)
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    """
+    Аутентифицирует пользователя и выдает JWT-токен.
+
+    Args:
+        form_data (OAuth2PasswordRequestForm): Данные формы с именем пользователя и паролем.
+        db (Session): Сессия SQLAlchemy для доступа к базе данных.
+
+    Returns:
+        dict: Словарь с access_token и типом токена ("bearer").
+
+    Raises:
+        HTTPException: Если имя пользователя или пароль неверны (401).
+    """
     user = authenticate_user(db, form_data.username, form_data.password)
     if not user:
         raise HTTPException(
@@ -71,13 +113,36 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     return {"access_token": access_token, "token_type": "bearer"}
 
 # Получение текущего пользователя
+# Эндпоинт для получения данных текущего пользователя
 @app.get("/users/me", response_model=User)
 async def read_users_me(current_user: User = Depends(get_current_user)):
+    """
+    Возвращает данные текущего аутентифицированного пользователя.
+
+    Args:
+        current_user (User): Объект пользователя, полученный через get_current_user.
+
+    Returns:
+        User: Данные пользователя (username, balance и т.д.).
+    """
     return current_user
 
 # Получение списка доступных моделей
 @app.get("/models", response_model=list[Model])
 async def get_models(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    Возвращает список доступных ML-моделей.
+
+    Args:
+        current_user (User): Объект текущего пользователя для аутентификации.
+        db (Session): Сессия SQLAlchemy для доступа к базе данных.
+
+    Returns:
+        list[Model]: Список объектов моделей с их ID, именем и стоимостью.
+
+    Raises:
+        HTTPException: Если пользователь не аутентифицирован (401).
+    """
     return get_available_models(db)
 
 @app.post("/predict", response_model=Prediction)
@@ -87,6 +152,22 @@ async def predict(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
+    """
+    Запускает асинхронное предсказание с использованием ML-модели.
+
+    Args:
+        model_id (int): ID выбранной ML-модели.
+        file (UploadFile): Загружаемый файл (CSV или XLSX) с входными данными.
+        current_user (User): Объект текущего пользователя для аутентификации.
+        db (Session): Сессия SQLAlchemy для доступа к базе данных.
+
+    Returns:
+        Prediction: Объект предсказания с текущим статусом ("pending").
+
+    Raises:
+        HTTPException: Если файл отсутствует, имеет неверный формат, модель не найдена,
+                       баланс недостаточен или пользователь не аутентифицирован (400, 401).
+    """
     # Проверка расширения файла
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file provided")
@@ -110,17 +191,14 @@ async def predict(
     if current_user.balance < selected_model.cost:
         raise HTTPException(status_code=400, detail="Insufficient balance")
     
-    # Создание предсказания
-    prediction = Prediction(
+    # Создание записи предсказания со статусом "pending"
+    db_prediction = create_prediction(
+        db,
         user_id=current_user.id,
         model_id=model_id,
         input_data=input_data,
-        status="pending",
-        created_at=datetime.now(timezone.utc)
+        status="pending"
     )
-    
-    # Выполнение предсказания
-    prediction = make_prediction(db, prediction)
 
     # Списание токенов и запись транзакции
     deduct_balance(db, current_user.username, selected_model.cost)
@@ -131,4 +209,16 @@ async def predict(
         description=f"Prediction using model {selected_model.name}"
     )
 
-    return prediction
+    # Запуск асинхронной задачи
+    celery_app.send_task("services.tasks.predict_task", args=[db_prediction.id])
+    
+    # Возвращаем объект Prediction с текущим статусом
+    return Prediction(
+        id=db_prediction.id,
+        user_id=db_prediction.user_id,
+        model_id=db_prediction.model_id,
+        input_data=db_prediction.input_data,
+        result=db_prediction.result,
+        status=db_prediction.status,
+        created_at=db_prediction.created_at
+    )

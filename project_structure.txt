@@ -16,10 +16,13 @@ ml_service/
 │   ├── __init__.py
 │   ├── auth.py
 │   ├── db_operations.py
-│   └── prediction_service.py
+│   ├── prediction_service.py
+│   └── tasks.py
 ├── tests
 │   └── test_endpoints.py
 ├── Makefile
+├── celery.log
+├── celery_app.py
 ├── database.py
 ├── init_models.py
 ├── main.py

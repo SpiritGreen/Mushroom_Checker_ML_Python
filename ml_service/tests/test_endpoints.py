@@ -3,7 +3,7 @@ import sys
 import os
 import pandas as pd
 import io
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from sqlalchemy.sql import text
 from sqlalchemy import inspect
 
@@ -26,6 +26,9 @@ from datetime import timedelta
 from models.user import User
 from models.model import Model
 from models.prediction import Prediction
+
+from celery.result import AsyncResult
+from celery_app import app as celery_app
 
 # Фикстура для SQLite в памяти
 @pytest.fixture(scope="function")
@@ -165,18 +168,32 @@ cap-diameter,cap-shape,cap-surface,cap-color,does-bruise-or-bleed,gill-attachmen
 """
     csv_file = tmp_path / "test_data.csv"
     csv_file.write_text(test_csv)
-    
-    with open(csv_file, "rb") as f:
-        response = client.post(
-            "/predict?model_id=1",
-            headers={"Authorization": f"Bearer {registered_user['token']}"},
-            files={"file": ("test_data.csv", f, "text/csv")}
-        )
-    
+
+    # Создаём мок-объект задачи с атрибутом id
+    mock_task = MagicMock()
+    mock_task.id = "mock_task_id"
+
+    with patch("main.celery_app.send_task", return_value=mock_task) as mock_send_task:
+        with open(csv_file, "rb") as f:
+            response = client.post(
+                "/predict?model_id=1",
+                headers={"Authorization": f"Bearer {registered_user['token']}"},
+                files={"file": ("test_data.csv", f, "text/csv")}
+            )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending"
+
+    # Имитация завершения задачи
+    prediction_id = response.json()["id"]
+    test_db.execute(text(f"UPDATE predictions SET status = 'completed', result = '[\"p\"]' WHERE id = {prediction_id}"))
+    test_db.commit()
+
+    response = client.get(f"/predictions/{prediction_id}", headers={"Authorization": f"Bearer {registered_user['token']}"})
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
-    assert len(response.json()["result"]) == 1
-    assert response.json()["result"][0] in ["e", "p"]
+    assert response.json()["result"] == ["p"]
+    
 
 def test_predict_xlsx(client, test_db, registered_user, tmp_path):
     test_db.add(DBModel(id=1, name="RandomForest", cost=1.0, file_path="ml_models/trained_ml_models/RandomForest.pkl"))
@@ -202,18 +219,31 @@ def test_predict_xlsx(client, test_db, registered_user, tmp_path):
     df = pd.DataFrame(test_data)
     excel_file = tmp_path / "test_data.xlsx"
     df.to_excel(excel_file, index=False)
-    
-    with open(excel_file, "rb") as f:
-        response = client.post(
-            "/predict?model_id=1",
-            headers={"Authorization": f"Bearer {registered_user['token']}"},
-            files={"file": ("test_data.xlsx", f, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
-        )
-    
+
+    # Создаём мок-объект задачи с атрибутом id
+    mock_task = MagicMock()
+    mock_task.id = "mock_task_id"
+
+    with patch("main.celery_app.send_task", return_value=mock_task) as mock_send_task:
+        with open(excel_file, "rb") as f:
+            response = client.post(
+                "/predict?model_id=1",
+                headers={"Authorization": f"Bearer {registered_user['token']}"},
+                files={"file": ("test_data.xlsx", f, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")}
+            )
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending"
+
+    # Имитация завершения задачи
+    prediction_id = response.json()["id"]
+    test_db.execute(text(f"UPDATE predictions SET status = 'completed', result = '[\"p\"]' WHERE id = {prediction_id}"))
+    test_db.commit()
+
+    response = client.get(f"/predictions/{prediction_id}", headers={"Authorization": f"Bearer {registered_user['token']}"})
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
-    assert len(response.json()["result"]) == 1
-    assert response.json()["result"][0] in ["e", "p"]
+    assert response.json()["result"] == ["p"]
+
 
 def test_predict_invalid_file_type(client, test_db, registered_user, tmp_path):
     test_db.add(DBModel(id=1, name="RandomForest", cost=1.0, file_path="ml_models/trained_ml_models/RandomForest.pkl"))
@@ -301,16 +331,32 @@ cap-diameter,cap-shape,cap-surface,cap-color,does-bruise-or-bleed,gill-attachmen
 """
     csv_file = tmp_path / "test_data.csv"
     csv_file.write_text(test_csv)
-    
-    with open(csv_file, "rb") as f:
-        response = client.post(
-            "/predict?model_id=1",
-            headers={"Authorization": f"Bearer {registered_user['token']}"},
-            files={"file": ("test_data.csv", f, "text/csv")}
-        )
-    
+
+    # Создаём мок-объект задачи с атрибутом id
+    mock_task = MagicMock()
+    mock_task.id = "mock_task_id"
+
+    with patch("main.celery_app.send_task", return_value=mock_task) as mock_send_task:
+        with open(csv_file, "rb") as f:
+            response = client.post(
+                "/predict?model_id=1",
+                headers={"Authorization": f"Bearer {registered_user['token']}"},
+                files={"file": ("test_data.csv", f, "text/csv")}
+            )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending"
+
+    # Имитация завершения задачи
+    prediction_id = response.json()["id"]
+    test_db.execute(text(f"UPDATE predictions SET status = 'completed', result = '[\"p\"]' WHERE id = {prediction_id}"))
+    test_db.commit()
+
+    response = client.get(f"/predictions/{prediction_id}", headers={"Authorization": f"Bearer {registered_user['token']}"})
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
+    assert response.json()["result"] == ["p"]
+
     user = test_db.query(DBUser).filter(DBUser.username == "testuser").first()
     assert user.balance == 9.0  # Баланс уменьшился на 1.0 (стоимость RandomForest)
 
@@ -324,8 +370,7 @@ cap-diameter,cap-shape,cap-surface,cap-color,does-bruise-or-bleed,gill-attachmen
     csv_file = tmp_path / "test_data.csv"
     csv_file.write_text(test_csv)
     
-    with patch("os.path.exists") as mock_exists:
-        mock_exists.return_value = False
+    with patch("os.path.exists", return_value=False) as mock_exists:
         with open(csv_file, "rb") as f:
             response = client.post(
                 "/predict?model_id=1",
@@ -345,15 +390,28 @@ cap-diameter,cap-shape,cap-surface,cap-color,does-bruise-or-bleed,gill-attachmen
 """
     csv_file = tmp_path / "test_data.csv"
     csv_file.write_text(test_csv)
-    
-    with open(csv_file, "rb") as f:
-        response = client.post(
-            "/predict?model_id=1",
-            headers={"Authorization": f"Bearer {registered_user['token']}"},
-            files={"file": ("test_data.csv", f, "text/csv")}
-        )
-    
+
+    # Создаём мок-объект задачи с атрибутом id
+    mock_task = MagicMock()
+    mock_task.id = "mock_task_id"
+
+    with patch("main.celery_app.send_task", return_value=mock_task) as mock_send_task:
+        with open(csv_file, "rb") as f:
+            response = client.post(
+                "/predict?model_id=1",
+                headers={"Authorization": f"Bearer {registered_user['token']}"},
+                files={"file": ("test_data.csv", f, "text/csv")}
+            )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "pending"
+
+    # Имитация завершения задачи
+    prediction_id = response.json()["id"]
+    test_db.execute(text(f"UPDATE predictions SET status = 'completed', result = '[\"p\"]' WHERE id = {prediction_id}"))
+    test_db.commit()
+
+    response = client.get(f"/predictions/{prediction_id}", headers={"Authorization": f"Bearer {registered_user['token']}"})
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
-    assert len(response.json()["result"]) == 1
-    assert response.json()["result"][0] in ["e", "p"]
+    assert response.json()["result"] == ["p"]

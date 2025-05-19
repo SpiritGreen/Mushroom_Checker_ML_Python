@@ -55,15 +55,7 @@ def get_user(db: Session = Depends(get_db), username: str = None) -> Optional[Us
     """
     db_user = db.query(DBUser).filter(DBUser.username == username).first()
     if db_user:
-        return User(
-            id=db_user.id,
-            username=db_user.username,
-            email=db_user.email,
-            hashed_password=db_user.hashed_password,
-            balance=db_user.balance,
-            disabled=db_user.disabled,
-            created_at=db_user.created_at
-        )
+        return User.model_validate(db_user)
     logger.warning(f"Пользователь не найден: {username}")
     return None
 
@@ -132,15 +124,7 @@ def register_user(db: Session = Depends(get_db), username: str = None, email: st
     db.commit()
     db.refresh(db_user)
     logger.info(f"Пользователь {username} успешно зарегистрирован")
-    return User(
-        id=db_user.id,
-        username=db_user.username,
-        email=db_user.email,
-        hashed_password=db_user.hashed_password,
-        balance=db_user.balance,
-        disabled=db_user.disabled,
-        created_at=db_user.created_at
-    )
+    return User.model_validate(db_user)
 
 def deduct_balance(db: Session = Depends(get_db), username: str = None, amount: float = None) -> User:
     """
@@ -168,12 +152,31 @@ def deduct_balance(db: Session = Depends(get_db), username: str = None, amount: 
     db.commit()
     db.refresh(db_user)
     logger.info(f"Снято {amount} токенов у {username}. Новый баланс: {db_user.balance}")
-    return User(
-        id=db_user.id,
-        username=db_user.username,
-        email=db_user.email,
-        hashed_password=db_user.hashed_password,
-        balance=db_user.balance,
-        disabled=db_user.disabled,
-        created_at=db_user.created_at
-    )
+    return User.model_validate(db_user)
+
+def increase_balance(db: Session, username: str, amount: float) -> User:
+    """
+    Пополняет баланс пользователя на указанную сумму.
+
+    Args:
+        db (Session): Сессия SQLAlchemy.
+        username (str): Имя пользователя.
+        amount (float): Сумма для пополнения (должна быть положительной).
+
+    Returns:
+        User: Обновлённый объект пользователя.
+
+    Raises:
+        HTTPException: Если пользователь не найден или сумма некорректна.
+    """
+    if amount <= 0:
+        logger.error(f"Пополнение провалено: Некорректная сумма {amount} для {username}")
+        raise HTTPException(status_code=400, detail="Сумма пополнения должна быть положительной")
+    db_user = db.query(DBUser).filter(DBUser.username == username).first()
+    if not db_user:
+        raise HTTPException(status_code=404, detail="Пользователь не найден")
+    db_user.balance += amount
+    db.commit()
+    db.refresh(db_user)
+    logger.info(f"Добавлено {amount} токенов для {username}. Новый баланс: {db_user.balance}")
+    return User.model_validate(db_user)

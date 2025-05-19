@@ -1,3 +1,4 @@
+import json
 import pandas as pd
 import io
 import logging
@@ -82,7 +83,7 @@ def read_input_file(file: bytes, file_type: str) -> Sequence[Dict[str, Any]]:
             df = pd.read_excel(file_stream)
         else:
             logger.error(f"Неподдерживаемый тип файла: {file_type}")
-            raise HTTPException(status_code=400, detail="Неподдерживаемый тип файла")
+            raise HTTPException(status_code=400, detail="Неподдерживаемый тип файла. Поддерживаются только CSV и XLSX файлы.")
         data = df.to_dict(orient="records")
         logger.info(f"Успешно прочитано строк: {len(data)}")
         return data
@@ -214,7 +215,7 @@ def make_prediction(db: Session, prediction: Prediction) -> Prediction:
         result = le_class.inverse_transform(predictions).tolist()
 
         # Обновление предсказания в БД
-        db_prediction = update_prediction_result(db, db_prediction.id, result, "completed")
+        db_prediction = update_prediction_result(db, db_prediction.id, json.dumps(result), "completed")
 
         logger.info("Предсказание успешно завершено")
         return Prediction(
@@ -229,7 +230,11 @@ def make_prediction(db: Session, prediction: Prediction) -> Prediction:
     except HTTPException as e:
         logger.error(f"Предсказание завершилось ошибкой: {str(e)}")
         raise
+    except ValueError as e:
+        update_prediction_result(db, db_prediction.id, json.dumps([]), "failed")
+        logger.error(f"Ошибка предсказания: Неверные данные: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Invalid data: {str(e)}")
     except Exception as e:
-        update_prediction_result(db, db_prediction.id, [], "failed")
+        update_prediction_result(db, db_prediction.id, json.dumps([]), "failed")
         logger.error(f"Неожиданная ошибка предсказания: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Prediction error: {str(e)}")

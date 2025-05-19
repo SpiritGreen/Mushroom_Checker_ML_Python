@@ -1,10 +1,23 @@
+import json
 from fastapi import FastAPI, Depends, HTTPException, status, File, UploadFile
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import JWTError, jwt
 from typing import Optional
 from sqlalchemy.orm import Session
-from services.auth import User, Token, TokenData, authenticate_user, create_access_token, register_user, get_user, deduct_balance
-from services.prediction_service import read_input_file, make_prediction, get_available_models
+import os
+
+from services.auth import (
+    User, 
+    Token, 
+    TokenData, 
+    authenticate_user, 
+    create_access_token, 
+    register_user, 
+    get_user, 
+    deduct_balance, 
+    increase_balance)
+
+from services.prediction_service import read_input_file, make_prediction, get_available_models, validate_input_data
 from services.db_operations import create_transaction
 from models.prediction import Prediction
 from models.model import Model
@@ -18,6 +31,9 @@ from db.db_user import DBUser
 from db.db_model import DBModel
 from db.db_prediction import DBPrediction
 from db.db_transaction import DBTransaction
+
+import logging
+logger = logging.getLogger(__name__)
 
 # Настройки
 SECRET_KEY = "secret-key"
@@ -181,11 +197,19 @@ async def predict(
     content = await file.read()
     input_data = read_input_file(content, file_type)
 
+    # Валидация входных данных
+    validate_input_data(input_data)
+
     # Проверка модели
     models = get_available_models(db)
     selected_model = next((m for m in models if m.id == model_id), None)
     if not selected_model:
         raise HTTPException(status_code=400, detail="Invalid model ID")
+    
+    # Проверка существования файла модели
+    model_path = os.path.join("ml_models", "trained_ml_models", f"{selected_model.name}.pkl")
+    if not os.path.exists(model_path):
+        raise HTTPException(status_code=500, detail=f"Model file not found: {model_path}")
     
     # Проверка баланса
     if current_user.balance < selected_model.cost:
@@ -210,7 +234,12 @@ async def predict(
     )
 
     # Запуск асинхронной задачи
-    celery_app.send_task("services.tasks.predict_task", args=[db_prediction.id])
+    try:
+        task = celery_app.send_task("services.tasks.predict_task", args=[db_prediction.id])
+        logger.info(f"Задача отправлена: predict_task with prediction_id={db_prediction.id}, task_id={task.id}")
+    except Exception as e:
+        logger.error(f"Не удалось отправить задачу для prediction_id={db_prediction.id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to queue task: {str(e)}")
     
     # Возвращаем объект Prediction с текущим статусом
     return Prediction(
@@ -222,3 +251,88 @@ async def predict(
         status=db_prediction.status,
         created_at=db_prediction.created_at
     )
+
+@app.post("/payment", response_model=User)
+async def payment(
+    amount: float,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Пополняет баланс текущего пользователя.
+
+    Args:
+        amount (float): Сумма для пополнения.
+        current_user (User): Текущий аутентифицированный пользователь.
+        db (Session): Сессия SQLAlchemy.
+
+    Returns:
+        User: Обновлённый объект пользователя с новым балансом.
+
+    Raises:
+        HTTPException: Если сумма некорректна или пользователь не найден.
+    """
+    updated_user = increase_balance(db, current_user.username, amount)
+    logger.info(f"Пользователь {current_user.username} пополнил баланс на {amount}")
+    create_transaction(
+        db,
+        user_id=current_user.id,
+        amount=amount,
+        description=f"Increase balance by {amount}"
+    )
+    return updated_user
+
+@app.get("/predictions/{prediction_id}")
+def get_prediction(prediction_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """
+    Получение статуса и результата конкретного предсказания.
+
+    Этот эндпоинт позволяет аутентифицированным пользователям получить информацию о предсказании
+    по его идентификатору. Возвращает идентификатор, статус и результат предсказания, если он доступен.
+
+    Аргументы:
+    - prediction_id (int): Уникальный идентификатор предсказания.
+
+    Возвращает:
+    - Словарь, содержащий идентификатор, статус и результат предсказания:
+      - "id" (int): Идентификатор предсказания.
+      - "status" (str): Текущий статус предсказания (например, "pending", "completed", "failed").
+      - "result" (list): Результат предсказания, если доступен, иначе пустой список.
+
+    Исключения:
+    - HTTPException(404): Если предсказание с указанным ID не найдено.
+    - HTTPException(401): Если пользователь не аутентифицирован или токен недействителен.
+
+    Пример:
+    - GET /predictions/1
+      Ответ:
+      {
+          "id": 1,
+          "status": "completed",
+          "result": ["p", "e"]
+      }
+    """
+
+    prediction = db.query(DBPrediction).filter(DBPrediction.id == prediction_id).first()
+    if not prediction:
+        raise HTTPException(status_code=404, detail="Prediction not found")
+    
+    logger.debug(f"Prediction result raw: {prediction.result}, type: {type(prediction.result)}")
+    
+    result = []
+    if prediction.result is not None:
+        if isinstance(prediction.result, str):
+            try:
+                result = json.loads(prediction.result)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse prediction.result: {prediction.result}, error: {str(e)}")
+                raise HTTPException(status_code=500, detail="Invalid JSON in prediction result")
+        elif isinstance(prediction.result, (list, dict)):
+            result = prediction.result
+        else:
+            logger.error(f"Unexpected type for prediction.result: {type(prediction.result)}")
+            raise HTTPException(status_code=500, detail="Invalid prediction result type")
+    
+    logger.debug(f"Parsed result: {result}")
+    
+    return {"id": prediction.id, "status": prediction.status, "result": result}

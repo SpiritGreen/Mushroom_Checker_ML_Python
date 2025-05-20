@@ -152,6 +152,7 @@ def make_prediction(db: Session, prediction: Prediction) -> Prediction:
             raise HTTPException(status_code=500, detail=f"Model file not found: {model_path}")
         with open(model_path, 'rb') as f:
             model = pickle.load(f)
+        logger.debug(f"Loaded model: {type(model)}, random_state: {getattr(model, 'random_state', None)}")
 
         # Загрузка импутеров и энкодеров
         imputers = {}
@@ -218,12 +219,14 @@ def make_prediction(db: Session, prediction: Prediction) -> Prediction:
         db_prediction = update_prediction_result(db, db_prediction.id, json.dumps(result), "completed")
 
         logger.info("Предсказание успешно завершено")
+        # Парсим result из строки JSON в список перед созданием объекта Prediction, чтобы избежать ошибки ValueError
+        parsed_result = json.loads(db_prediction.result) if db_prediction.result else None
         return Prediction(
             id=db_prediction.id,
             user_id=db_prediction.user_id,
             model_id=db_prediction.model_id,
             input_data=db_prediction.input_data,
-            result=db_prediction.result,
+            result=parsed_result,
             status=db_prediction.status,
             created_at=db_prediction.created_at
         )

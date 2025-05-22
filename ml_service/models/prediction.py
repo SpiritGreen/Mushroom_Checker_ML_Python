@@ -10,5 +10,6 @@ class Prediction(BaseModel):
     result: Optional[List[str]] = None  # Список предсказаний (e - edible или p - poisonous)
     status: str = "pending"  # pending, completed, failed
     created_at: Optional[datetime] = None
+    task_id: Optional[str] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True) # Чтобы избежать ошибок с pydantic

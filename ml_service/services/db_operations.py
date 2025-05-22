@@ -118,7 +118,7 @@ def update_prediction_result(db: Session, prediction_id: int, result: List[str],
         db.refresh(db_prediction)
     return db_prediction
 
-def create_transaction(db: Session, user_id: int, amount: float, description: str) -> DBTransaction:
+def create_transaction(db: Session, user_id: int, amount: float, description: str, prediction_id: Optional[int] = None) -> DBTransaction:
     """
     Создаёт запись о транзакции в базе данных.
 
@@ -135,7 +135,8 @@ def create_transaction(db: Session, user_id: int, amount: float, description: st
         user_id=user_id,
         amount=amount,
         description=description,
-        created_at=datetime.now(timezone.utc)
+        created_at=datetime.now(timezone.utc),
+        prediction_id=prediction_id
     )
     db.add(db_transaction)
     db.commit()

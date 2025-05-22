@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Float, String, DateTime
+from sqlalchemy import Column, Integer, Float, String, DateTime, ForeignKey
 from database import Base
 from datetime import datetime, timezone
 
@@ -9,3 +9,4 @@ class DBTransaction(Base):
     amount = Column(Float, nullable=False)
     description = Column(String, nullable=False)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    prediction_id = Column(Integer, ForeignKey("predictions.id"), nullable=True)

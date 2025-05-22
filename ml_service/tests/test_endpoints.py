@@ -85,7 +85,7 @@ def registered_user(client, test_db):
     token = token_response.json()["access_token"]
     return {"username": "testuser", "token": token}
 
-    # Тест для проверки создания таблиц
+# Тест для проверки создания таблиц
 def test_tables_created(test_db):
     # Проверяем, что таблица 'users' существует
     result = test_db.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='users'")).fetchone()
@@ -94,6 +94,7 @@ def test_tables_created(test_db):
     # Проверяем, что таблица 'models' существует
     result = test_db.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='models'")).fetchone()
     assert result is not None, "Таблица 'models' не была создана"
+
 
 def test_register(client, test_db):
     response = client.post("/register", data={"username": "testuser", "password": "password123", "email": "testuser@example.com"})
@@ -106,6 +107,7 @@ def test_register_existing_user(client, test_db):
     response = client.post("/register", data={"username": "testuser", "password": "password123", "email": "testuser@example.com"})
     assert response.status_code == 400
     assert response.json()["detail"] == "Пользователь или email уже существует"
+
 
 def test_token(client, test_db):
     create_user(test_db, username="testuser", email="testuser@example.com", password="password123")
@@ -135,6 +137,7 @@ def test_token_expired(client, test_db):
     assert response.status_code == 401
     assert response.json()["detail"] == "Не удалось проверить учетные данные"
 
+
 def test_get_models(client, test_db, registered_user):
     test_db.add(DBModel(id=1, name="RandomForest", cost=1.0, file_path="ml_models/trained_ml_models/RandomForest.pkl"))
     test_db.commit()
@@ -148,6 +151,7 @@ def test_get_models_invalid_token(client):
     assert response.status_code == 401
     assert response.json()["detail"] == "Не удалось проверить учетные данные"
 
+
 def test_users_me(client, registered_user):
     response = client.get("/users/me", headers={"Authorization": f"Bearer {registered_user['token']}"})
     assert response.status_code == 200
@@ -158,6 +162,43 @@ def test_users_me_invalid_token(client):
     response = client.get("/users/me", headers={"Authorization": "Bearer invalid_token"})
     assert response.status_code == 401
     assert response.json()["detail"] == "Не удалось проверить учетные данные"
+
+
+def test_payment(client, test_db, registered_user):
+    response = client.post(
+        "/payment?amount=5.0",
+        headers={"Authorization": f"Bearer {registered_user['token']}"}
+    )
+    assert response.status_code == 200
+    assert response.json()["balance"] == 15.0  # 10.0 (начальный) + 5.0
+    user = test_db.query(DBUser).filter(DBUser.username == "testuser").first()
+    assert user.balance == 15.0
+    transaction = test_db.query(DBTransaction).filter(DBTransaction.user_id == user.id).first()
+    assert transaction.amount == 5.0
+    assert transaction.description == "Increase balance by 5.0"
+
+def test_get_transactions(client, test_db, registered_user):
+    # Добавляем транзакцию через /payment
+    client.post(
+        "/payment?amount=5.0",
+        headers={"Authorization": f"Bearer {registered_user['token']}"}
+    )
+    response = client.get(
+        "/transactions",
+        headers={"Authorization": f"Bearer {registered_user['token']}"}
+    )
+    assert response.status_code == 200
+    assert len(response.json()) == 1
+    assert response.json()[0]["amount"] == 5.0
+    assert response.json()[0]["description"] == "Increase balance by 5.0"
+
+def test_payment_invalid_amount(client, test_db, registered_user):
+    response = client.post(
+        "/payment?amount=-5.0",
+        headers={"Authorization": f"Bearer {registered_user['token']}"}
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Сумма должна быть положительной"
 
 def test_predict_csv(client, test_db, registered_user, tmp_path):
     test_db.add(DBModel(id=1, name="RandomForest", cost=1.0, file_path="ml_models/trained_ml_models/RandomForest.pkl"))
@@ -194,7 +235,6 @@ cap-diameter,cap-shape,cap-surface,cap-color,does-bruise-or-bleed,gill-attachmen
     assert response.json()["status"] == "completed"
     assert response.json()["result"] == ["p"]
     
-
 def test_predict_xlsx(client, test_db, registered_user, tmp_path):
     test_db.add(DBModel(id=1, name="RandomForest", cost=1.0, file_path="ml_models/trained_ml_models/RandomForest.pkl"))
     test_db.commit()
@@ -244,7 +284,6 @@ def test_predict_xlsx(client, test_db, registered_user, tmp_path):
     assert response.json()["status"] == "completed"
     assert response.json()["result"] == ["p"]
 
-
 def test_predict_invalid_file_type(client, test_db, registered_user, tmp_path):
     test_db.add(DBModel(id=1, name="RandomForest", cost=1.0, file_path="ml_models/trained_ml_models/RandomForest.pkl"))
     test_db.commit()
@@ -259,7 +298,7 @@ def test_predict_invalid_file_type(client, test_db, registered_user, tmp_path):
         )
     
     assert response.status_code == 400
-    assert response.json()["detail"] == "Only CSV or XLSX files are supported"
+    assert response.json()["detail"] == "Unsupported file format: txt. Use CSV or XLSX."
 
 def test_predict_missing_columns(client, test_db, registered_user, tmp_path):
     test_db.add(DBModel(id=1, name="RandomForest", cost=1.0, file_path="ml_models/trained_ml_models/RandomForest.pkl"))
@@ -299,7 +338,7 @@ cap-diameter,cap-shape,cap-surface,cap-color,does-bruise-or-bleed,gill-attachmen
         )
     
     assert response.status_code == 400
-    assert response.json()["detail"] == "Invalid model ID"
+    assert response.json()["detail"] == "Model ID 999 not found. Check available models with GET /models."
 
 def test_predict_insufficient_balance(client, test_db, registered_user, tmp_path):
     test_db.add(DBModel(id=1, name="RandomForest", cost=1.0, file_path="ml_models/trained_ml_models/RandomForest.pkl"))
@@ -320,7 +359,7 @@ cap-diameter,cap-shape,cap-surface,cap-color,does-bruise-or-bleed,gill-attachmen
         )
     
     assert response.status_code == 400
-    assert response.json()["detail"] == "Insufficient balance"
+    assert str.startswith(response.json()["detail"], "Insufficient balance")
 
 def test_predict_balance_deduction(client, test_db, registered_user, tmp_path):
     test_db.add(DBModel(id=1, name="RandomForest", cost=1.0, file_path="ml_models/trained_ml_models/RandomForest.pkl"))
@@ -379,7 +418,7 @@ cap-diameter,cap-shape,cap-surface,cap-color,does-bruise-or-bleed,gill-attachmen
             )
     
     assert response.status_code == 500
-    assert response.json()["detail"].startswith("Model file not found")
+    assert str.startswith(response.json()["detail"], "Model file not found")
 
 def test_predict_unknown_categorical_value(client, test_db, registered_user, tmp_path):
     test_db.add(DBModel(id=1, name="RandomForest", cost=1.0, file_path="ml_models/trained_ml_models/RandomForest.pkl"))
@@ -415,3 +454,11 @@ cap-diameter,cap-shape,cap-surface,cap-color,does-bruise-or-bleed,gill-attachmen
     assert response.status_code == 200
     assert response.json()["status"] == "completed"
     assert response.json()["result"] == ["p"]
+
+def test_get_balance(client, registered_user):
+    response = client.get(
+        "/balance",
+        headers={"Authorization": f"Bearer {registered_user['token']}"}
+    )
+    assert response.status_code == 200
+    assert "balance" in response.json()

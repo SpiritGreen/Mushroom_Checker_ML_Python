@@ -15,7 +15,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Настройки JWT
-SECRET_KEY = "secret-key"  # Секретный ключ для подписи JWT-токенов
+SECRET_KEY = "1c56bc27814669ed3c54fb2729a9523fa99b30d31d9f5f549cd3525cd0e8c34a"  # Секретный ключ для подписи JWT-токенов
 ALGORITHM = "HS256"  # Алгоритм шифрования (HMAC SHA-256)
 ACCESS_TOKEN_EXPIRE_MINUTES = 30  # Время жизни токена в минутах
 

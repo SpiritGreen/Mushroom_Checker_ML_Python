@@ -18,6 +18,7 @@ from services.auth import (
     increase_balance)
 
 from services.prediction_service import read_input_file, make_prediction, get_available_models, validate_input_data
+from models.transaction import Transaction
 from services.db_operations import create_transaction
 from models.prediction import Prediction
 from models.model import Model
@@ -36,14 +37,27 @@ import logging
 logger = logging.getLogger(__name__)
 
 # Настройки
-SECRET_KEY = "secret-key"
+SECRET_KEY = "1c56bc27814669ed3c54fb2729a9523fa99b30d31d9f5f549cd3525cd0e8c34a"
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
+
+MAX_FILE_SIZE = 200 * 1024 * 1024  # 200 MB
 
 # Создание таблиц при запуске
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI()
+# app = FastAPI()
+app = FastAPI(
+    title="ML Service API",
+    description="API для работы с ML-сервисом: аутентификация, предсказания и управление счетом.",
+    version="1.0.0",
+    openapi_tags=[
+        {"name": "auth", "description": "Аутентификация и управление пользователями"},
+        {"name": "models", "description": "Получение списка доступных ML-моделей"},
+        {"name": "predictions", "description": "Запрос и получение предсказаний"},
+        {"name": "account", "description": "Управление балансом и транзакциями"},
+    ]
+)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
@@ -81,7 +95,7 @@ async def get_current_user(token: str = Depends(oauth2_scheme), db: Session = De
     return user
 
 # Регистрация нового пользователя
-@app.post("/register", response_model=User)
+@app.post("/register", response_model=User, tags=["auth"])
 async def register(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     """
     Регистрирует нового пользователя в системе.
@@ -100,7 +114,7 @@ async def register(form_data: OAuth2PasswordRequestForm = Depends(), db: Session
     return user
 
 # Аутентификация пользователя
-@app.post("/token", response_model=Token)
+@app.post("/token", response_model=Token, tags=["auth"])
 async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     """
     Аутентифицирует пользователя и выдает JWT-токен.
@@ -130,7 +144,7 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
 
 # Получение текущего пользователя
 # Эндпоинт для получения данных текущего пользователя
-@app.get("/users/me", response_model=User)
+@app.get("/users/me", response_model=User, tags=["auth"])
 async def read_users_me(current_user: User = Depends(get_current_user)):
     """
     Возвращает данные текущего аутентифицированного пользователя.
@@ -144,13 +158,13 @@ async def read_users_me(current_user: User = Depends(get_current_user)):
     return current_user
 
 # Получение списка доступных моделей
-@app.get("/models", response_model=list[Model])
+@app.get("/models", response_model=list[Model], tags=["models"])
 async def get_models(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """
-    Возвращает список доступных ML-моделей.
+    Возвращает список всех доступных ML-моделей для предсказаний.
 
     Args:
-        current_user (User): Объект текущего пользователя для аутентификации.
+        current_user (User): Аутентифицированный пользователь.
         db (Session): Сессия SQLAlchemy для доступа к базе данных.
 
     Returns:
@@ -161,7 +175,8 @@ async def get_models(current_user: User = Depends(get_current_user), db: Session
     """
     return get_available_models(db)
 
-@app.post("/predict", response_model=Prediction)
+# Запрос на получение предсказания
+@app.post("/predict", response_model=Prediction, tags=["predictions"])
 async def predict(
     model_id: int,
     file: UploadFile = File(...),
@@ -184,14 +199,17 @@ async def predict(
         HTTPException: Если файл отсутствует, имеет неверный формат, модель не найдена,
                        баланс недостаточен или пользователь не аутентифицирован (400, 401).
     """
+    if file.size is None or file.size > MAX_FILE_SIZE:
+        raise HTTPException(status_code=400, detail="File too large or invalid, max 200MB. Please upload a valid CSV or XLSX file.")
+
     # Проверка расширения файла
     if not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided")
+        raise HTTPException(status_code=400, detail="No file provided. Please upload a CSV or XLSX file.")
     
     file_type = file.filename.split(".")[-1].lower()
    
     if file_type not in ["csv", "xlsx"]:
-        raise HTTPException(status_code=400, detail="Only CSV or XLSX files are supported")
+        raise HTTPException(status_code=400, detail=f"Unsupported file format: {file_type}. Use CSV or XLSX.")
     
     # Чтение файла
     content = await file.read()
@@ -204,7 +222,7 @@ async def predict(
     models = get_available_models(db)
     selected_model = next((m for m in models if m.id == model_id), None)
     if not selected_model:
-        raise HTTPException(status_code=400, detail="Invalid model ID")
+        raise HTTPException(status_code=400, detail=f"Model ID {model_id} not found. Check available models with GET /models.")
     
     # Проверка существования файла модели
     model_path = os.path.join("ml_models", "trained_ml_models", f"{selected_model.name}.pkl")
@@ -213,7 +231,7 @@ async def predict(
     
     # Проверка баланса
     if current_user.balance < selected_model.cost:
-        raise HTTPException(status_code=400, detail="Insufficient balance")
+        raise HTTPException(status_code=400, detail=f"Insufficient balance: {current_user.balance}. Required: {selected_model.cost}. Increase balance via POST /payment.")
     
     # Создание записи предсказания со статусом "pending"
     db_prediction = create_prediction(
@@ -249,10 +267,79 @@ async def predict(
         input_data=db_prediction.input_data,
         result=db_prediction.result,
         status=db_prediction.status,
-        created_at=db_prediction.created_at
+        created_at=db_prediction.created_at,
+        task_id=str(task.id)
     )
 
-@app.post("/payment", response_model=User)
+# Получение статуса конкретного предсказания
+@app.get("/predictions/{prediction_id}", tags=["predictions"])
+def get_prediction(prediction_id: int, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
+    """
+    Получение статуса и результата конкретного предсказания.
+
+    Этот эндпоинт позволяет аутентифицированным пользователям получить информацию о предсказании
+    по его идентификатору. Возвращает идентификатор, статус и результат предсказания, если он доступен.
+
+    Аргументы:
+        - prediction_id (int): ID предсказания.
+        - current_user (User): Аутентифицированный пользователь.
+        - db (Session): Сессия SQLAlchemy.
+
+    Возвращает:
+        - Prediction: Объект предсказания.
+
+    Исключения:
+    - HTTPException(404): Если предсказание с указанным ID не найдено.
+    - HTTPException(401): Если пользователь не аутентифицирован или токен недействителен.
+
+    Пример:
+    - GET /predictions/1
+      Ответ:
+      {
+          "id": 1,
+          "status": "completed",
+          "result": ["p", "e"]
+      }
+    """
+
+    prediction = db.query(DBPrediction).filter(
+        DBPrediction.id == prediction_id,
+        DBPrediction.user_id == current_user.id
+    ).first()
+
+    if not prediction:
+        raise HTTPException(status_code=404, detail=f"Prediction ID {prediction_id} not found or not owned by user.")
+    
+    logger.debug(f"Retrieved prediction {prediction_id} for user {current_user.username}")
+    
+    result = []
+    if prediction.result is not None:
+        if isinstance(prediction.result, str):
+            try:
+                result = json.loads(prediction.result)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse prediction.result: {prediction.result}, error: {str(e)}")
+                raise HTTPException(status_code=500, detail="Invalid JSON in prediction result")
+        elif isinstance(prediction.result, (list, dict)):
+            result = prediction.result
+        else:
+            logger.error(f"Unexpected type for prediction.result: {type(prediction.result)}")
+            raise HTTPException(status_code=500, detail="Invalid prediction result type")
+    
+    logger.debug(f"Parsed result: {result}")
+
+    return Prediction(
+        id=prediction.id,
+        user_id=prediction.user_id,
+        model_id=prediction.model_id,
+        input_data=prediction.input_data,
+        result=result,
+        status=prediction.status,
+        created_at=prediction.created_at
+    )
+
+# Пополнение счета аккаунта
+@app.post("/payment", response_model=User, tags=["account"])
 async def payment(
     amount: float,
     current_user: User = Depends(get_current_user),
@@ -272,6 +359,8 @@ async def payment(
     Raises:
         HTTPException: Если сумма некорректна или пользователь не найден.
     """
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="Сумма должна быть положительной")
     updated_user = increase_balance(db, current_user.username, amount)
     logger.info(f"Пользователь {current_user.username} пополнил баланс на {amount}")
     create_transaction(
@@ -282,57 +371,49 @@ async def payment(
     )
     return updated_user
 
-@app.get("/predictions/{prediction_id}")
-def get_prediction(prediction_id: int, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+# Получение текущего баланса
+@app.get("/balance", tags=["account"])
+async def get_balance(current_user: User = Depends(get_current_user)):
     """
-    Получение статуса и результата конкретного предсказания.
+    Возвращает текущий баланс пользователя.
 
-    Этот эндпоинт позволяет аутентифицированным пользователям получить информацию о предсказании
-    по его идентификатору. Возвращает идентификатор, статус и результат предсказания, если он доступен.
+    Args:
+        current_user (User): Аутентифицированный пользователь.
 
-    Аргументы:
-    - prediction_id (int): Уникальный идентификатор предсказания.
+    Returns:
+        dict: Словарь с текущим балансом.
 
-    Возвращает:
-    - Словарь, содержащий идентификатор, статус и результат предсказания:
-      - "id" (int): Идентификатор предсказания.
-      - "status" (str): Текущий статус предсказания (например, "pending", "completed", "failed").
-      - "result" (list): Результат предсказания, если доступен, иначе пустой список.
-
-    Исключения:
-    - HTTPException(404): Если предсказание с указанным ID не найдено.
-    - HTTPException(401): Если пользователь не аутентифицирован или токен недействителен.
-
-    Пример:
-    - GET /predictions/1
-      Ответ:
-      {
-          "id": 1,
-          "status": "completed",
-          "result": ["p", "e"]
-      }
+    Raises:
+        HTTPException: Если пользователь не аутентифицирован.
     """
+    logger.info(f"User {current_user.username} checked balance: {current_user.balance}")
+    return {"balance": current_user.balance}
 
-    prediction = db.query(DBPrediction).filter(DBPrediction.id == prediction_id).first()
-    if not prediction:
-        raise HTTPException(status_code=404, detail="Prediction not found")
-    
-    logger.debug(f"Prediction result raw: {prediction.result}, type: {type(prediction.result)}")
-    
-    result = []
-    if prediction.result is not None:
-        if isinstance(prediction.result, str):
-            try:
-                result = json.loads(prediction.result)
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse prediction.result: {prediction.result}, error: {str(e)}")
-                raise HTTPException(status_code=500, detail="Invalid JSON in prediction result")
-        elif isinstance(prediction.result, (list, dict)):
-            result = prediction.result
-        else:
-            logger.error(f"Unexpected type for prediction.result: {type(prediction.result)}")
-            raise HTTPException(status_code=500, detail="Invalid prediction result type")
-    
-    logger.debug(f"Parsed result: {result}")
-    
-    return {"id": prediction.id, "status": prediction.status, "result": result}
+@app.get("/transactions", response_model=list[Transaction], tags=["account"])
+async def get_transactions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Возвращает историю транзакций пользователя.
+
+    Args:
+        current_user (User): Аутентифицированный пользователь.
+        db (Session): Сессия SQLAlchemy.
+
+    Returns:
+        list[Transaction]: Список транзакций пользователя.
+
+    Raises:
+        HTTPException: Если пользователь не аутентифицирован.
+    """
+    transactions = db.query(DBTransaction).filter(DBTransaction.user_id == current_user.id).all()
+    logger.info(f"User {current_user.username} retrieved transaction history")
+    return [Transaction(
+        id=t.id,
+        user_id=t.user_id,
+        amount=t.amount,
+        description=t.description,
+        created_at=t.created_at
+    ) for t in transactions]
+

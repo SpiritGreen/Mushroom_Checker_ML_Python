@@ -1,0 +1,4 @@
+cap-diameter,cap-shape,cap-surface,cap-color,does-bruise-or-bleed,gill-attachment,gill-spacing,gill-color,stem-height,stem-width,stem-surface,stem-color,has-ring,ring-type,habitat,season
+5.0,convex,scaly,brown,false,adnate,close,white,6.0,2.0,fibrous,white,true,pendant,forest,spring
+3.2,bell,smooth,red,true,decurrent,crowded,buff,4.5,1.5,scaly,red,false,none,grass,summer
+,flat,,gray,false,attached,close,white,5.0,2.5,fibrous,white,true,evanescent,forest,autumn

@@ -60,7 +60,6 @@ data/
 nosetests.xml
 
 # Test data
-data.csv
 READ_DATA.py
 watch_project_structure.py
 ADDITIONAL_DATA/

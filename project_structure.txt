@@ -6,6 +6,14 @@ ml_service/
 │   ├── db_prediction.py
 │   ├── db_transaction.py
 │   └── db_user.py
+├── logs
+│   ├── celery_flower.log
+│   ├── celery_worker.log
+│   ├── init_models.log
+│   ├── install_deps.log
+│   ├── redis.log
+│   ├── telegram_bot.log
+│   └── uvicorn.log
 ├── models
 │   ├── __init__.py
 │   ├── model.py
@@ -21,10 +29,17 @@ ml_service/
 ├── tests
 │   └── test_endpoints.py
 ├── Makefile
+├── bot.log
 ├── celery.log
 ├── celery_app.py
+├── celery_flower.pid
+├── celery_worker.pid
 ├── database.py
 ├── init_models.py
 ├── main.py
 ├── ml_service.db
-└── train_models.py
+├── requirements.txt
+├── telegram_bot.pid
+├── telegram_bot.py
+├── train_models.py
+└── uvicorn.pid
